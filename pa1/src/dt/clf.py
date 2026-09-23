@@ -146,10 +146,23 @@ class InteriorNode(Node):
         X_col: np.ndarray = X[:, feature_idx]
         feature_type = self.header[feature_idx].type
 
-        # TODO: evaluate the quality of this feature!
-        #       don't forget that you need to consider two cases:
-        #           - the feature is DISCRETE (eval this feature by considering the sole split)
-        #           - the feature is CONTINUOUS (eval this feature by choosing the best "version" of this feature)
+        
+        if feature_type == FeatureType.DISCRETE:
+            feature_quality = self.quality_function.quality(y_gt, [y_gt[X_col == val] for val in X_col.domain()])
+            feature_split_values = X_col.domain() #e.g. windy? domain = {false, true}
+
+        elif feature_type == FeatureType.CONTINUOUS:
+            thresholds = self._get_continuous_feature_thresholds(X_col, y_gt)
+
+            best_quality = -np.inf
+            for threshold in thresholds:
+                left_y_gt = y_gt[X_col <= threshold]
+                right_y_gt = y_gt[X_col > threshold]
+                quality = self.quality_function.quality(y_gt, [left_y_gt, right_y_gt])
+                if quality > best_quality:
+                    best_quality = quality
+                    feature_quality = quality
+                    feature_split_values = [threshold] #one split value t: <=t and >t
 
         return feature_quality, feature_split_values
 
@@ -158,8 +171,11 @@ class InteriorNode(Node):
                                            y_gt: np.ndarray) -> Sequence[float]:
         thresholds: Sequence[float] = list()
 
-        # TODO: calculate the potential thresholds this continuous feature
-        #       could choose! Remember the algorithm from lecture!
+        #iterate through cont x array
+        #if current gt ≠ next gt, is threshold and add average to thresholds
+        for i in range(X_col.shape[0] - 1):
+            if y_gt[i] != y_gt[i + 1]:
+                thresholds.append((X_col[i] + X_col[i + 1]) / 2)
 
         return thresholds
 
@@ -178,7 +194,7 @@ class InteriorNode(Node):
 
         # get the column of data that this interior node focuses on
         X_col: np.ndarray = X[:, self.feature_idx]
-        feature_type = self.header[feature_idx].type
+        feature_type = self.header[self.feature_idx].type
 
         # TODO: split (self.X, self.y_gt) according to this node.
         #       don't forget that you need to consider two cases:
