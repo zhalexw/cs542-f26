@@ -36,7 +36,7 @@ class TestDTClfPlayOutsideDataset(unittest.TestCase):
 
         model = DecisionTreeClassifier(self.header_play_outside, quality_function)
         model.fit(self.X_play_outside, self.y_gt_play_outside)
-
+        print(model)
         self.assertEqual(8, model.num_nodes)
 
         # first node should be an InteriorNode and focus on the outlook feature

@@ -216,6 +216,7 @@ class InteriorNode(Node):
                 child_X = X[X_col == split_value]
                 child_y_gt = y_gt[X_col == split_value]
                 child_datasets.append((child_X, child_y_gt))
+                #print(f"Child dataset for split value {split_value}: {child_X.shape[0]} samples")
         elif feature_type == FeatureType.CONTINUOUS:
             threshold = self.feature_split_values[0]
             left_X = X[X_col <= threshold]
@@ -263,7 +264,24 @@ class DecisionTreeClassifier(Model):
                available_feature_idxs: Set[int],
                depth: int,
                pre_prune_function: Callable[[np.ndarray, np.ndarray, Set[int], int], bool] = None) -> Node:
-        node: Node = None
+        
+
+        if (len(available_feature_idxs) == 0) or (len(np.unique(y_gt)) == 1):
+            self.num_nodes += 1
+            return LeafNode(self.header, self.quality_function, X, y_gt)
+
+        else: 
+            node = InteriorNode(self.header, self.quality_function, X, y_gt, available_feature_idxs)
+            self.num_nodes += 1
+            child_datasets = node.get_child_datasets(X, y_gt)
+            for child_X, child_y_gt in child_datasets:
+                child_node = self._build(child_X, child_y_gt, node.child_feature_idxs, depth + 1, pre_prune_function)
+                node.children.append(child_node)
+
+            return node
+        
+
+        
 
         # TODO: build the tree! This method needs to turn a dataset into a node.
         #       If that node is an InteriorNode we need to get the child datasets and
@@ -277,8 +295,6 @@ class DecisionTreeClassifier(Model):
         #
         #       you should expect this to be called like this:
         #           pre_prune_function(X, y_gt, available_feature_idxs, depth)
-
-        return node
 
     def fit(self: DecisionTreeClassifier,
             X: np.ndarray,
