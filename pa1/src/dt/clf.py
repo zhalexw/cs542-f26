@@ -111,6 +111,7 @@ class InteriorNode(Node):
         if self.feature_type == FeatureType.DISCRETE:
             self.child_feature_idxs.remove(self.feature_idx)
 
+
     def _pick_best_feature(self: InteriorNode,
                            X: np.ndarray,
                            y_gt: np.ndarray,
@@ -145,11 +146,12 @@ class InteriorNode(Node):
 
         X_col: np.ndarray = X[:, feature_idx]
         feature_type = self.header[feature_idx].type
+        features = np.unique(X_col)
 
         
         if feature_type == FeatureType.DISCRETE:
-            feature_quality = self.quality_function.quality(y_gt, [y_gt[X_col == val] for val in X_col.domain()])
-            feature_split_values = X_col.domain() #e.g. windy? domain = {false, true}
+            feature_quality = self.quality_function.quality(y_gt, [y_gt[X_col == val] for val in features])
+            feature_split_values = features
 
         elif feature_type == FeatureType.CONTINUOUS:
             thresholds = self._get_continuous_feature_thresholds(X_col, y_gt)
@@ -181,9 +183,22 @@ class InteriorNode(Node):
 
     def predict(self: InteriorNode,
                 x: np.ndarray) -> Union[int, Node]:
+        
         child: Node = None
+        feature = x[self.feature_idx]
 
-        # TODO: choose the child node the sample 'x' would flow to
+        for i, split_value in enumerate(self.feature_split_values):
+            if self.feature_type == FeatureType.DISCRETE:
+                if feature == split_value:
+                    child = self.children[i]
+                    break
+            elif self.feature_type == FeatureType.CONTINUOUS:
+                if feature <= split_value:
+                    child = self.children[i]
+                    break
+                else:
+                    child = self.children[i + 1]
+                    break
 
         return child
 
@@ -196,10 +211,19 @@ class InteriorNode(Node):
         X_col: np.ndarray = X[:, self.feature_idx]
         feature_type = self.header[self.feature_idx].type
 
-        # TODO: split (self.X, self.y_gt) according to this node.
-        #       don't forget that you need to consider two cases:
-        #           - the feature is DISCRETE: generate one dataset per feature value
-        #           - the feature is CONTINUOUS: make a binary split
+        if feature_type == FeatureType.DISCRETE:
+            for split_value in self.feature_split_values:
+                child_X = X[X_col == split_value]
+                child_y_gt = y_gt[X_col == split_value]
+                child_datasets.append((child_X, child_y_gt))
+        elif feature_type == FeatureType.CONTINUOUS:
+            threshold = self.feature_split_values[0]
+            left_X = X[X_col <= threshold]
+            left_y_gt = y_gt[X_col <= threshold]
+            right_X = X[X_col > threshold]
+            right_y_gt = y_gt[X_col > threshold]
+            child_datasets.append((left_X, left_y_gt))
+            child_datasets.append((right_X, right_y_gt))
 
         return child_datasets
 
