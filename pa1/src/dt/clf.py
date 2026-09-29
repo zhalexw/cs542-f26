@@ -28,6 +28,9 @@ class Node(ABC):
         # majority class
         self.majority_class = self.get_majority_class(X, y_gt)
 
+        self.X = X
+        self.y_gt = y_gt
+
         # children of this Node
         self.children = list()
 
@@ -155,7 +158,6 @@ class InteriorNode(Node):
 
         elif feature_type == FeatureType.CONTINUOUS:
             thresholds = self._get_continuous_feature_thresholds(X_col, y_gt)
-
             best_quality = -np.inf
             for threshold in thresholds:
                 left_y_gt = y_gt[X_col <= threshold]
@@ -165,6 +167,8 @@ class InteriorNode(Node):
                     best_quality = quality
                     feature_quality = quality
                     feature_split_values = [threshold] #one split value t: <=t and >t
+            if feature_quality is None:
+                feature_quality = -np.inf
 
         return feature_quality, feature_split_values
 
@@ -175,9 +179,13 @@ class InteriorNode(Node):
 
         #iterate through cont x array
         #if current gt ≠ next gt, is threshold and add average to thresholds
-        for i in range(X_col.shape[0] - 1):
-            if y_gt[i] != y_gt[i + 1]:
-                thresholds.append((X_col[i] + X_col[i + 1]) / 2)
+        sorted_idxs = np.argsort(X_col)
+        sorted_X_col = X_col[sorted_idxs]
+        sorted_y_gt = y_gt[sorted_idxs]
+
+        for i in range(sorted_X_col.shape[0] - 1):
+            if sorted_y_gt[i] != sorted_y_gt[i + 1] and sorted_X_col[i] != sorted_X_col[i + 1]:
+                thresholds.append((sorted_X_col[i] + sorted_X_col[i + 1]) / 2)
 
         return thresholds
 
@@ -200,12 +208,17 @@ class InteriorNode(Node):
                     child = self.children[i + 1]
                     break
 
-        return child
+        return child if child is not None else self.majority_class
 
     def get_child_datasets(self: InteriorNode,
-                           X: np.ndarray,
-                           y_gt: np.ndarray) -> Sequence[tuple[np.ndarray, np.ndarray]]:
+                           X: np.ndarray = None,
+                           y_gt: np.ndarray = None) -> Sequence[tuple[np.ndarray, np.ndarray]]:
         child_datasets: Sequence[tuple[np.ndarray, np.ndarray]] = list()
+
+        if X is None:
+            X = self.X
+        if y_gt is None:
+            y_gt = self.y_gt
 
         # get the column of data that this interior node focuses on
         X_col: np.ndarray = X[:, self.feature_idx]
@@ -266,35 +279,25 @@ class DecisionTreeClassifier(Model):
                pre_prune_function: Callable[[np.ndarray, np.ndarray, Set[int], int], bool] = None) -> Node:
         
 
-        if (len(available_feature_idxs) == 0) or (len(np.unique(y_gt)) == 1):
+        should_pre_prune = pre_prune_function is not None and pre_prune_function(X, y_gt, available_feature_idxs, depth)
+
+        if (len(available_feature_idxs) == 0) or (len(np.unique(y_gt)) == 1) or should_pre_prune:
             self.num_nodes += 1
             return LeafNode(self.header, self.quality_function, X, y_gt)
 
         else: 
             node = InteriorNode(self.header, self.quality_function, X, y_gt, available_feature_idxs)
+            if node.feature_idx < 0 or len(node.feature_split_values) == 0:
+                self.num_nodes += 1
+                return LeafNode(self.header, self.quality_function, X, y_gt)
+
             self.num_nodes += 1
             child_datasets = node.get_child_datasets(X, y_gt)
             for child_X, child_y_gt in child_datasets:
-                child_node = self._build(child_X, child_y_gt, node.child_feature_idxs, depth + 1, pre_prune_function)
+                child_node = self._build(child_X, child_y_gt, set(node.child_feature_idxs), depth + 1, pre_prune_function)
                 node.children.append(child_node)
 
             return node
-        
-
-        
-
-        # TODO: build the tree! This method needs to turn a dataset into a node.
-        #       If that node is an InteriorNode we need to get the child datasets and
-        #       turn them into nodes too!
-        #
-        #       The argument 'pre_prune_function' will not be 'None' if the caller requests pre-pruning
-        #       to occur. Pre-pruning is something like setting a "max depth" or "minimum samples", you don't
-        #       have to care because this is a function pointer. If this argument is not 'None' and you call
-        #       it, it will return 'true' when you should clip this path and generate a LeafNode (even if
-        #       an InteriorNode would be chosen otherwise).
-        #
-        #       you should expect this to be called like this:
-        #           pre_prune_function(X, y_gt, available_feature_idxs, depth)
 
     def fit(self: DecisionTreeClassifier,
             X: np.ndarray,
@@ -307,13 +310,15 @@ class DecisionTreeClassifier(Model):
         # build the tree
         self.root = self._build(X, y_gt, self.available_feature_idxs, 1, pre_prune_function=pre_prune_function)
 
-        # TODO: implement minimum-cost-complexity pruning algorithm!
 
     def _predict_sample(self: DecisionTreeClassifier,
                         x: np.ndarray) -> int:
         node: Node = self.root
         while not node.is_leaf():
-            node = node.predict(x)
+            next_node = node.predict(x)
+            if not isinstance(next_node, Node):
+                return next_node
+            node = next_node
 
         # node should be a leaf node
         return node.predict(x)
