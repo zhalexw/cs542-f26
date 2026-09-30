@@ -2,6 +2,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Sequence, Set
+from copy import copy
 from typing import Tuple, Union
 import numpy as np
 
@@ -299,6 +300,110 @@ class DecisionTreeClassifier(Model):
 
             return node
 
+    def _leaf_error(self: DecisionTreeClassifier,
+                    node: Node) -> int:
+        return node.num_samples - int(np.max(node.unique_class_counts))
+
+    def _tree_stats(self: DecisionTreeClassifier,
+                    node: Node) -> tuple[int, int]:
+        if node.is_leaf():
+            return self._leaf_error(node), 1
+
+        num_errors = 0
+        num_leaves = 0
+        for child in node.children:
+            child_errors, child_leaves = self._tree_stats(child)
+            num_errors += child_errors
+            num_leaves += child_leaves
+        return num_errors, num_leaves
+
+    def _pessimistic_error(self: DecisionTreeClassifier,
+                           node: Node,
+                           alpha: float) -> float:
+        num_errors, num_leaves = self._tree_stats(node)
+        return num_errors + alpha * num_leaves
+
+    def _clone_tree(self: DecisionTreeClassifier,
+                    node: Node) -> Node:
+        """Clone the tree structure while sharing its immutable training arrays."""
+        cloned_node = copy(node)
+        cloned_node.children = [self._clone_tree(child) for child in node.children]
+        return cloned_node
+
+    def _minimum_cost_complexity_candidate(
+            self: DecisionTreeClassifier,
+            root: Node,
+            alpha: float) -> tuple[Node, int, InteriorNode]:
+        """Find the interior node selected by the Task 6 pruning ratio."""
+        best_parent = None
+        best_child_idx = -1
+        best_node = None
+        best_ratio = np.inf
+
+        def visit(node: Node,
+                  parent: Node = None,
+                  child_idx: int = -1) -> tuple[int, int]:
+            nonlocal best_parent, best_child_idx, best_node, best_ratio
+
+            if node.is_leaf():
+                return self._leaf_error(node), 1
+
+            subtree_errors = 0
+            subtree_leaves = 0
+            for idx, child in enumerate(node.children):
+                child_errors, child_leaves = visit(child, node, idx)
+                subtree_errors += child_errors
+                subtree_leaves += child_leaves
+
+            pruned_errors = self._leaf_error(node)
+            error_difference = (pruned_errors - subtree_errors) + \
+                               alpha * (1 - subtree_leaves)
+            removed_leaves = subtree_leaves - 1
+            ratio = error_difference / removed_leaves if removed_leaves > 0 else 0.0
+
+            if ratio < best_ratio:
+                best_parent = parent
+                best_child_idx = child_idx
+                best_node = node
+                best_ratio = ratio
+
+            return subtree_errors, subtree_leaves
+
+        visit(root)
+        return best_parent, best_child_idx, best_node
+
+    def _minimum_cost_complexity_prune(self: DecisionTreeClassifier,
+                                       root: Node,
+                                       alpha: float) -> Node:
+        """Build the pruning sequence and return its minimum-error tree."""
+        current_root = root
+        best_root = self._clone_tree(current_root)
+        best_error = self._pessimistic_error(current_root, alpha)
+
+        while not current_root.is_leaf():
+            parent, child_idx, node_to_prune = \
+                self._minimum_cost_complexity_candidate(current_root, alpha)
+            pruned_node = LeafNode(self.header,
+                                   self.quality_function,
+                                   node_to_prune.X,
+                                   node_to_prune.y_gt)
+
+            if parent is None:
+                current_root = pruned_node
+            else:
+                parent.children[child_idx] = pruned_node
+
+            current_error = self._pessimistic_error(current_root, alpha)
+            if current_error < best_error:
+                best_error = current_error
+                best_root = self._clone_tree(current_root)
+
+        return best_root
+
+    def _count_nodes(self: DecisionTreeClassifier,
+                     node: Node) -> int:
+        return 1 + sum(self._count_nodes(child) for child in node.children)
+
     def fit(self: DecisionTreeClassifier,
             X: np.ndarray,
             y_gt: np.ndarray,
@@ -308,7 +413,12 @@ class DecisionTreeClassifier(Model):
         # alpha is the hyperparameter coefficient for the pessimistic error estimate
 
         # build the tree
+        self.num_nodes = 0
         self.root = self._build(X, y_gt, self.available_feature_idxs, 1, pre_prune_function=pre_prune_function)
+
+        if mcc_prune:
+            self.root = self._minimum_cost_complexity_prune(self.root, alpha)
+            self.num_nodes = self._count_nodes(self.root)
 
 
     def _predict_sample(self: DecisionTreeClassifier,
