@@ -209,17 +209,14 @@ class InteriorNode(Node):
                     child = self.children[i + 1]
                     break
 
-        return child if child is not None else self.majority_class
+        return child if child is not None else LeafNode(
+    self.header, self.quality_function, self.X, self.y_gt
+)
 
     def get_child_datasets(self: InteriorNode,
                            X: np.ndarray = None,
                            y_gt: np.ndarray = None) -> Sequence[tuple[np.ndarray, np.ndarray]]:
         child_datasets: Sequence[tuple[np.ndarray, np.ndarray]] = list()
-
-        if X is None:
-            X = self.X
-        if y_gt is None:
-            y_gt = self.y_gt
 
         # get the column of data that this interior node focuses on
         X_col: np.ndarray = X[:, self.feature_idx]
