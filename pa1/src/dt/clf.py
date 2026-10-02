@@ -469,8 +469,8 @@ class RandomForestClassifier(Model):
 
     def _sample_features(self: RandomForestClassifier,
                          max_features: int) -> Set[int]:
-        # choose 'max_features' from the available features
-        num_features: int = np.random.choice(max_features)
+        # choose between one and max_features distinct features
+        num_features: int = np.random.randint(1, max_features + 1)
 
         # note that this returns a **set** of feature indices
         return set(np.random.choice(len(self.header), size=num_features, replace=False))
@@ -494,24 +494,22 @@ class RandomForestClassifier(Model):
                   many features a single tree can see.
         """
 
-        for i in range(self.num_trees):
-
+        self.trees = []
+        for _ in range(self.num_trees):
             feature_idxs = self._sample_features(self.max_num_features)
-            features = [self.header[i] for i in feature_idxs]
+            X_sample, y_sample = self._bootstrap_sample(X, y_gt, X.shape[0])
 
-            samples = self._bootstrap_sample (X, y_gt, len(feature_idxs))
-
-            tree = DecisionTreeClassifier(features, self.quality_function)
-            tree.fit(samples[0], samples[1], pre_prune_function, mcc_prune, alpha)
-
+            tree = DecisionTreeClassifier(
+                self.header, self.quality_function,
+                available_feature_idxs=feature_idxs,
+            )
+            tree.fit(X_sample, y_sample,
+                     pre_prune_function,
+                     mcc_prune, alpha)
             self.trees.append(tree)
-
-
 
     def predict(self: RandomForestClassifier,
                 X: np.ndarray) -> np.ndarray:
-        if not self.trees:
-            raise ValueError("The forest has no trees to make predictions")
 
         votes = np.stack([tree.predict(X) for tree in self.trees], axis=0)
         y_hat = np.empty(X.shape[0], dtype=votes.dtype)
