@@ -297,12 +297,12 @@ class DecisionTreeClassifier(Model):
 
             return node
 
-    def _leaf_error(self: DecisionTreeClassifier,
-                    node: Node) -> int:
+    def _leaf_error(self, node):
         return node.num_samples - int(np.max(node.unique_class_counts))
 
-    def _tree_stats(self: DecisionTreeClassifier,
-                    node: Node) -> tuple[int, int]:
+    #calculate e(D_train)
+    def _tree_stats(self, node):
+
         if node.is_leaf():
             return self._leaf_error(node), 1
 
@@ -314,32 +314,25 @@ class DecisionTreeClassifier(Model):
             num_leaves += child_leaves
         return num_errors, num_leaves
 
-    def _pessimistic_error(self: DecisionTreeClassifier,
-                           node: Node,
-                           alpha: float) -> float:
+    #error formula e' :- e(Dtrain) + a|leaves(T)|
+    def _pessimistic_error(self, node, alpha):
         num_errors, num_leaves = self._tree_stats(node)
         return num_errors + alpha * num_leaves
 
-    def _clone_tree(self: DecisionTreeClassifier,
-                    node: Node) -> Node:
-        """Clone the tree structure while sharing its immutable training arrays."""
+    #generate new tree
+    def _clone_tree(self, node):
         cloned_node = copy(node)
         cloned_node.children = [self._clone_tree(child) for child in node.children]
         return cloned_node
 
-    def _minimum_cost_complexity_candidate(
-            self: DecisionTreeClassifier,
-            root: Node,
-            alpha: float) -> tuple[Node, int, InteriorNode]:
-        """Find the interior node selected by the Task 6 pruning ratio."""
+    #find n*
+    def _minimum_cost_complexity_candidate(self, root, alpha ):
         best_parent = None
         best_child_idx = -1
         best_node = None
         best_ratio = np.inf
 
-        def visit(node: Node,
-                  parent: Node = None,
-                  child_idx: int = -1) -> tuple[int, int]:
+        def visit(node, parent = None, child_idx = -1):
             nonlocal best_parent, best_child_idx, best_node, best_ratio
 
             if node.is_leaf():
@@ -369,10 +362,8 @@ class DecisionTreeClassifier(Model):
         visit(root)
         return best_parent, best_child_idx, best_node
 
-    def _minimum_cost_complexity_prune(self: DecisionTreeClassifier,
-                                       root: Node,
-                                       alpha: float) -> Node:
-        """Build the pruning sequence and return its minimum-error tree."""
+    #call this lol
+    def _minimum_cost_complexity_prune(self, root, alpha):
         current_root = root
         best_root = self._clone_tree(current_root)
         best_error = self._pessimistic_error(current_root, alpha)
@@ -397,8 +388,7 @@ class DecisionTreeClassifier(Model):
 
         return best_root
 
-    def _count_nodes(self: DecisionTreeClassifier,
-                     node: Node) -> int:
+    def _count_nodes(self, node):
         return 1 + sum(self._count_nodes(child) for child in node.children)
 
     def fit(self: DecisionTreeClassifier,
@@ -504,13 +494,33 @@ class RandomForestClassifier(Model):
                   many features a single tree can see.
         """
 
-        # TODO: build the forest! 
-        ...
+        for i in range(self.num_trees):
+
+            feature_idxs = self._sample_features(self.max_num_features)
+            features = [self.header[i] for i in feature_idxs]
+
+            samples = self._bootstrap_sample (X, y_gt, len(feature_idxs))
+
+            tree = DecisionTreeClassifier(features, self.quality_function)
+            tree.fit(samples[0], samples[1], pre_prune_function, mcc_prune, alpha)
+
+            self.trees.append(tree)
+
+
 
     def predict(self: RandomForestClassifier,
                 X: np.ndarray) -> np.ndarray:
-        # TODO: ask each tree to predict 'X' and then implement majority voting!
-        ...
+        if not self.trees:
+            raise ValueError("The forest has no trees to make predictions")
+
+        votes = np.stack([tree.predict(X) for tree in self.trees], axis=0)
+        y_hat = np.empty(X.shape[0], dtype=votes.dtype)
+
+        for sample_idx in range(X.shape[0]):
+            classes, counts = np.unique(votes[:, sample_idx], return_counts=True)
+            y_hat[sample_idx] = classes[np.argmax(counts)]
+
+        return y_hat
 
     # helpful for printing the forest
     def __str__(self: RandomForestClassifier) -> str:
