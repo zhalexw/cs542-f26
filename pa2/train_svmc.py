@@ -6,6 +6,9 @@ import os
 import sys
 import unittest
 
+import matplotlib.pyplot as plt
+from sklearn.model_selection import StratifiedKFold
+
 
 # can't do relative file importing since this is an executable
 # so need to ensure required base paths are on sys.path
@@ -46,45 +49,52 @@ def load_data(dataset_name: str) -> tuple[Header, np.ndarray, np.ndarray]:
 
 def make_model(header: Header, args) -> Model:
     kernel = None
-    if args.kernel == "quad":
+    if args == "quad":
         kernel = QuadradicKernel()
-    elif args.kernel == "rbf":
+    elif args == "rbf":
         kernel = RBFKernel()
-    elif args.kernel == "linear":
+    elif args == "linear":
         kernel = LinearKernel()
-    else:
-        # TODO: add more quality functions if you want
-        ...
 
     return SVMC(header, kernel)
 
+def make_folds(X, y_gt):
+    splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=12345)
+    return list(splitter.split(X, y_gt))
+
 
 def main() -> None:
-    parser = ap.ArgumentParser()
-    parser.add_argument("dataset", choices=["play_outside", "spam", "volcanoes", "voting", "small_linsep"],
-                        help="dataset name to load")
-    parser.add_argument("kernel", choices=["quad", "rbf", "linear"], help="which kind of kernel function to use")
-    parser.add_argument("-c", "--penalty_coeff", type=float, default=1.0, help="value of C")
-    parser.add_argument("-m", "--max_iters", type=int, default=100, help="max number of iterations")
-    parser.add_argument("-e", "--epsilon", type=float, default=0.001, help="max tolerance for deviations in alphas")
-    parser.add_argument("-t", "--tol", type=float, default=1e-5, help="max tolerance for KKT conditions")
-    args = parser.parse_args()
+    header, X, y_gt = load_data("play_outside")
+    t = make_folds(X, y_gt)
+    for train, test in t:
+        print(train)
+        print(test)
+    
 
-    header, X, y_gt = load_data(args.dataset)
+    for dataset in ["spam", "volcanoes", "voting"]:
+        header, X, y_gt = load_data(dataset)
+        folds = make_folds(X, y_gt)
+        for kernel in ["linear", "rbf", "quad"]:
+            model = make_model(header, kernel)
+            for c in [1000, 500, 100, 10, 1]:
+                if dataset == "voting" and (c == 500 or c == 10):
+                    continue
+                for train_idxs, test_idxs in folds:
+                    model.fit(X[train_idxs], y_gt[train_idxs], C=c, max_iters=100000, epsilon=1e-08, tol=1e-05)
+                    print(model)
 
-    model = make_model(header, args)
+                    # get the accuracy of the model
+                    print(f"{dataset} {kernel} accuracy C={c}", "=>", np.sum(y_gt[test_idxs] == model.predict(X[test_idxs]).reshape(-1)) / y_gt[test_idxs].shape[0])
 
-    model.fit(X, y_gt, C=args.penalty_coeff, max_iters=args.max_iters, epsilon=args.epsilon, tol=args.tol)
-    print(model)
 
-    # get the accuracy of the model
-    print("SVMC accuracy", "=>", np.sum(y_gt == model.predict(X).reshape(-1)) / y_gt.shape[0])
-
-    # fit scikit-learns implementation and measure its accuracy
+    
+    
+    
+    """# fit scikit-learns implementation and measure its accuracy
     m = SVC(kernel=args.kernel if "rbf" in args.kernel or "linear" in args.kernel else "linear",
             C=args.penalty_coeff, max_iter=args.max_iters, tol=args.tol)
     m.fit(X, y_gt)
-    print("sklearn accuracy", "=>", np.sum(y_gt == m.predict(X).reshape(-1)) / y_gt.shape[0])
+    print("sklearn accuracy", "=>", np.sum(y_gt[test_idxs] == m.predict(X[test_idxs]).reshape(-1)) / y_gt[test_idxs].shape[0])"""
 
 
 if __name__ == "__main__":

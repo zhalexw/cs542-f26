@@ -7,7 +7,7 @@ import numpy as np
 
 
 # PYTHON PROJECT IMPORTS
-from .data.header import Feature, FeatureType, ContinuousFeature, DiscreteFeature, Header
+from .data.header import Feature, FeatureType, ContinuousFeature, DiscreteFeature, Header, GroundTruth
 from .kernels.kernel import Kernel
 from .model import Model
 from .opt.smo import smo
@@ -34,7 +34,8 @@ class SVMC(Model):
         # one class to +1 and another class to -1
         self.class_to_expected_class, self.expected_class_to_class = self._make_class_maps(header)
 
-        self.w: np.ndarray = None
+        self.sv_coeffs: np.ndarray = None
+        self.X_svs: np.ndarray = None
         self.b: float = None
 
     def _make_class_maps(self: SVMC, header: Header) -> tuple[Dict[int, int], Dict[int, int]]:
@@ -66,15 +67,15 @@ class SVMC(Model):
     def _to_actual_classes(self: SVMC, y_hat: np.ndarray) -> np.ndarray:
         return self._apply_class_map(self.expected_class_to_class, y_hat)
 
-    def _to_w(self: SVMC, alphas: np.ndarray, X: np.ndarray, y_gt: np.ndarray) -> np.ndarray:
+    def _set_svs(self: SVMC, alphas: np.ndarray, X: np.ndarray, y_gt: np.ndarray, epsilon: float) -> None:
+        alphas = alphas.reshape(-1)
+        y_gt = y_gt.reshape(-1)
 
-        n = len(y_gt)
-        w = np.zeros(X.shape[1])
+        support_mask = np.abs(alphas) > epsilon
+        self.sv_coeffs = alphas[support_mask] * y_gt[support_mask]
+        self.X_svs = X[support_mask].copy()
 
-        for i in range(n):
-            w += alphas[i]*y_gt[i]*X[i]
-
-        return w
+        return None
 
         
     def fit(self: SVMC,
@@ -89,32 +90,36 @@ class SVMC(Model):
 
         alphas, b = smo(self.kernel, X, y_gt, C=C, epsilon=epsilon, tol=tol, max_iters=max_iters)
 
-        self.w = self._to_w(alphas, X, y_gt)
+        self._set_svs(alphas, X, y_gt, epsilon)
         self.b = b
 
         return None
 
+
+    def svs_sum(self, X, K : Kernel):
+
+        total = np.zeros(X.shape[0], dtype=float)
+        for coefficient, support_vector in zip(self.sv_coeffs, self.X_svs):
+            similarities = K.batch_similarity(X, support_vector).reshape(-1)
+            total += coefficient * similarities
+
+        return total
+
+
     def predict(self: SVMC,
                 X: np.ndarray) -> np.ndarray:
-        """
-            TODO: return a 1d array of class labels! You should
-                - calculate the signed margins using the learned hyperplane for each test point
-                - get the sign of each signed margin. Be careful if you choose to use np.sign, this function
-                  will assign a value of 0 to 0 values. We want either +1 or -1 with ties going to +1
-                - map the {-1, +1} labels back to the actual class lables used by the caller of this method.
-        """
-
-        w = self.w
+        
         b = self.b
+        K = self.kernel
 
-        margins = X @ w + b
+        margins = self.svs_sum(X, K) + b
         y_hat = np.where(margins >= 0, 1, -1)
 
         return self._to_actual_classes(y_hat)
         
 
     def __str__(self: SVMC) -> str:
-        return f"SVMC(header={self.header}, kernel={self.kernel}, w={self.w}, b={self.b})"
+        return f"SVMC(header={self.header}, kernel={self.kernel}, nsvs={self.sv_coeffs.shape[0]}, b={self.b})"
 
     def __repr__(self: SVMC) -> str:
         return str(self)
@@ -144,19 +149,29 @@ class OVRC(Model):
             C: float = 1.0,
             epsilon: float = 1e-9,
             max_iters: int = int(1e6)) -> None:
-        """
-            TODO: train each constituent model on the training data. This may involve messing with the training
-                  data somehow!
-        """
-        ...
+
+        labels = y_gt.reshape(-1)
+        classes = np.unique(labels)
+
+        binary_header = Header()
+        binary_header.features = list(self.header.features)
+        binary_header.add_ground_truth(GroundTruth(("0", "1")))
+
+        self.classes_ = classes
+        self.constituent_svmcs = []
+        for cls in classes:
+            binary_labels = (labels == cls).astype(int)
+            model = SVMC(binary_header, self.kernel)
+            model.fit(X, binary_labels, C=C, epsilon=epsilon, max_iters=max_iters)
+            self.constituent_svmcs.append(model)
 
     def predict(self: OVRC,
                 X: np.ndarray) -> np.ndarray:
-        """
-            TODO: ask each constituent model to predict which class it thinks it is and combine them together
-                  somehow to infer the overall class your ensemble should predict!
-        """
-        ...
+
+        scores = np.column_stack([
+            model.b + model.svs_sum(X, model.kernel) for model in self.constituent_svmcs
+        ])
+        return self.classes_[np.argmax(scores, axis=1)]
 
     def __str__(self: OVRC) -> str:
         return f"OVRC(header={self.header}, kernel={self.kernel}, svmcs={self.svmcs})"
@@ -189,19 +204,36 @@ class OVOC(Model):
             C: float = 1.0,
             epsilon: float = 1e-9,
             max_iters: int = int(1e6)) -> None:
-        """
-            TODO: train each constituent model on the training data. This may involve messing with the training
-                  data somehow!
-        """
-        ...
+
+        labels = y_gt.reshape(-1)
+        classes = np.unique(labels)
+
+        binary_header = Header()
+        binary_header.features = list(self.header.features)
+        binary_header.add_ground_truth(GroundTruth(("0", "1")))
+
+        self.classes_ = classes
+        self.constituent_svmcs = {}
+        for i, cls1 in enumerate(classes):
+            for cls2 in classes[i + 1:]:
+                pair_mask = (labels == cls1) | (labels == cls2)
+                binary_labels = (labels[pair_mask] == cls2).astype(int)
+                model = SVMC(binary_header, self.kernel)
+                model.fit(X[pair_mask], binary_labels,
+                          C=C, epsilon=epsilon, max_iters=max_iters)
+                self.constituent_svmcs[(cls1, cls2)] = model
 
     def predict(self: OVOC,
                 X: np.ndarray) -> np.ndarray:
-        """
-            TODO: ask each constituent model to predict which class it thinks it is and combine them together
-                  somehow to infer the overall class your ensemble should predict!
-        """
-        ...
+
+        votes = np.zeros((X.shape[0], len(self.classes_)), dtype=int)
+        class_indices = {cls: i for i, cls in enumerate(self.classes_)}
+        for (cls1, cls2), model in self.constituent_svmcs.items():
+            predictions = model.predict(X)
+            votes[:, class_indices[cls1]] += predictions == 0
+            votes[:, class_indices[cls2]] += predictions == 1
+
+        return self.classes_[np.argmax(votes, axis=1)]
 
     def __str__(self: OVOC) -> str:
         return f"OVOC(header={self.header}, kernel={self.kernel}, svmcs={self.svmcs})"

@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Sequence, Set
 from typing import Tuple, Union
 import numpy as np
+from tqdm import tqdm
 
 
 # PYTHON PROJECT IMPORTS
@@ -21,10 +22,9 @@ def _get_errors(K: Kernel,
                 alphas: np.ndarray, b: float,
                 X: np.ndarray, y_gt: np.ndarray) -> np.ndarray:
 
-    y_gt = y_gt.reshape(-1)
-    errors = [model_output(K, alphas, X, y_gt, b, i) - y_gt[i] for i in range(len(y_gt))]
+    errors = np.asarray([model_output(K, alphas, X, y_gt, b, i) - y_gt[i] for i in range(len(y_gt))])
 
-    return np.asarray(errors)
+    return errors
 
 
 def _alphas_violating_kkt(K: Kernel,
@@ -34,7 +34,8 @@ def _alphas_violating_kkt(K: Kernel,
                           epsilon, tol: float) -> Sequence[int]:
     
     alphas = alphas.reshape(-1)
-    signed_errors = y_gt.reshape(-1) * np.asarray(errors).reshape(-1)
+    y_gt = y_gt.reshape(-1)
+    signed_errors = y_gt*errors.reshape(-1)
     violations = []
 
     for i in range(len(signed_errors)):
@@ -66,9 +67,11 @@ def _smo_step(K: Kernel,
     if i1 == i2:
         return False, alphas, b
 
+    alphas = alphas.reshape(-1)
     y_gt = y_gt.reshape(-1)
-    errors = np.asarray(errors).reshape(-1)
-    a1, a2 = float(alphas.flat[i1]), float(alphas.flat[i2])
+    errors = errors.reshape(-1)
+
+    a1, a2 = alphas[i1], alphas[i2]
     y1, y2 = y_gt[i1], y_gt[i2]
     e1, e2 = errors[i1], errors[i2]
 
@@ -98,25 +101,33 @@ def _smo_step(K: Kernel,
     elif a2_new < L:
         a2_new = L
 
-    if a2_new == a2 or abs(a2_new - a2) < epsilon:
+    if abs(a2_new - a2) < epsilon:
         return False, alphas, b
 
 
     a1_new = a1-y1*y2*(a2_new-a2)
+    if a1_new > C: 
+        a1_new = C
+    elif a1_new < 0:
+        a1_new = 0
+
+    if abs(a1_new - a1) < epsilon:
+        return False, alphas, b
 
     b1 = b - e1 - y1*(a1_new-a1)*k11-y2*(a2_new-a2)*k21
     b2 = b - e2 - y1*(a1_new-a1)*k12-y2*(a2_new-a2)*k22
 
-    if a1_new > 0 and a1_new < C:
+    if 0 < a1_new < C:
         b = b1
-    elif a2_new > 0 and a2_new < C:
+    elif 0 < a2_new < C:
         b = b2
     else:
         b = (b1+b2)/2
 
-    alphas.flat[i1] = a1_new
-    alphas.flat[i2] = a2_new
-    return True, alphas, float(b)
+
+    alphas[i1] = a1_new
+    alphas[i2] = a2_new
+    return True, alphas, b
 
 
 def smo(K: Kernel,
