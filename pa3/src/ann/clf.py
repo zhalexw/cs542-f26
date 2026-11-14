@@ -126,8 +126,22 @@ class ANNC(Model):
     """
     def _map_user_samples(self: ANNC,
                           X_user_samples: np.ndarray) -> np.ndarray:
-        # TODO
-        ...
+        num_samples = X_user_samples.shape[0]
+        X_network_samples = np.zeros((num_samples, self.num_inputs))
+        output_col = 0
+
+        for input_col, feature_map in enumerate(self.input_to_feature_maps):
+            vals = X_user_samples[:, input_col]
+
+            if feature_map is None: #continuous
+                X_network_samples[:, output_col] = vals
+                output_col += 1
+            else: #discrete
+                positions = [feature_map[val] for val in vals] 
+                X_network_samples[np.arange(num_samples), output_col + np.asarray(positions)] = 1 #one hot encode
+                output_col += len(feature_map)
+
+        return X_network_samples
 
     """
         A method to calculate the gradients for 'W' and 'b' within a single layer. This method expects
@@ -141,8 +155,14 @@ class ANNC(Model):
                       W: Parameter,
                       b: Parameter,
                       activation: Activation) -> np.ndarray:
-        # TODO
-        ...
+
+        Z = X @ W.val + b.val
+        dloss_dz = activation.backward(Z, dLoss_dActivation_output)
+
+        W.grad += np.transpose(X) @ dloss_dz
+        b.grad += dloss_dz.sum(axis=0, keepdims=True)
+
+        return dloss_dz @ np.transpose(W.val)
 
     def _backward(self: ANNC,
                   X_network_samples: np.ndarray,
@@ -179,6 +199,13 @@ class ANNC(Model):
         for P in self.parameters():
             P.grad += 2*gamma*P.val
 
+    def penalty(self, gamma):
+        result = 0
+        for P in self.parameters():
+            vals = P.val ** 2
+            result += vals.sum()
+        return gamma*result
+    
     def fit(self: ANNC,
             X_user_samples: np.ndarray,
             y_gt: np.ndarray,
@@ -192,9 +219,28 @@ class ANNC(Model):
         Y_gt: np.ndarray = y_gt.reshape(-1,1) # make this a column vector
 
         # perform gradient descent until convergence
+        
+        predictions = self._predict(X_network_samples)
+        loss = self.loss_function.forward(predictions, Y_gt)
+        loss += self.penalty(gamma)
 
-        # TODO
-        ...
+        for _ in range(max_iters):
+            optimizer.reset()
+            self._backward(X_network_samples, Y_gt, gamma)
+            optimizer.step()
+
+            penalty = self.penalty(gamma)
+
+            new_predictions = self._predict(X_network_samples)
+            new_loss = self.loss_function.forward(new_predictions, Y_gt) + penalty
+
+            if abs(new_loss-loss) < epsilon:
+                break
+            else:
+                loss = new_loss
+
+        
+
 
     def _predict(self: ANNC,
                  X_network_samples: np.ndarray) -> np.ndarray:
