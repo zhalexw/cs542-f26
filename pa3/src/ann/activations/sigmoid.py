@@ -7,14 +7,15 @@ import numpy as np
 from .activation import Activation
 
 
+def sigmoid(x):
+    return 1 / (1 + np.exp(-1*x))
+
 class Sigmoid(Activation):
 
     # the formula of sigmoid is 1/(1 + e^-x)
     def forward(self: Sigmoid,
                 X: np.ndarray) -> np.ndarray:
-        # TODO
-        ...
-
+        return sigmoid(X)
 
     # SINCE sigmoid is element-wise INDEPENDENT, this makes derivatives nice.
     # lets say that X is a vector (x_1, x_2, ..., x_n)
@@ -33,6 +34,5 @@ class Sigmoid(Activation):
     def backward(self: Sigmoid,
                  X: np.ndarray,
                  dLoss_dOutput: np.ndarray) -> np.ndarray:
-        # TODO
-        ...
+        return dLoss_dOutput * (sigmoid(X)*(1-sigmoid(X)))
 

@@ -11,7 +11,7 @@ class ReLU(Activation):
 
     def forward(self: ReLUType,
                 X: np.ndarray) -> np.ndarray:
-        return np.asarray([max(0, x) for x in X])
+        return np.maximum(0, X)
 
 
     # SINCE ReLU is element-wise INDEPENDENT, this makes derivatives nice.
@@ -31,6 +31,5 @@ class ReLU(Activation):
     def backward(self: ReLUType,
                  X: np.ndarray,
                  dLoss_dOutput: np.ndarray) -> np.ndarray:
-        # TODO
-        ...
+        return dLoss_dOutput * (X > 0)
 
