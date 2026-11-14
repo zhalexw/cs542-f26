@@ -37,6 +37,10 @@ class CategoricalCrossEntropy(LossFunction):
                  Y_gt: np.ndarray) -> np.ndarray:
         assert(Y_hat.shape == Y_gt.shape)
 
-        # TODO
-        ...
+        
+        gradient = np.zeros(Y_hat.shape)
+
+        gradient[Y_gt==1] = -1 / (Y_hat.shape[0] * (Y_hat[Y_gt==1] + DELTA))
+
+        return gradient
 

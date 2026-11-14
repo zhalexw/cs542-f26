@@ -61,8 +61,19 @@ class Softmax(Activation):
     def jacobian_single_example(self: Softmax,
                                 x: np.ndarray, 
                                 y_hat: np.ndarray) -> np.ndarray:
-        # TODO
-        ...
+        
+        k = y_hat.shape[0]
+        J = np.empty((k, k))
+
+        for i in range(k):
+            for j in range(k):
+                if i == j:
+                    J[i, j] = self.stretch*y_hat[i]*(1-y_hat[i])
+                else:
+                    J[i, j] = -self.stretch*y_hat[i]*y_hat[j]
+
+        return J
+
 
 
     # this is done for you! This is because combining the
