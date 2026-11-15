@@ -1,6 +1,7 @@
 # SYSTEM IMPORTS
 from __future__ import annotations
 import numpy as np
+from scipy.special import expit
 
 
 # PYTHON PROJECT IMPORTS
@@ -8,7 +9,7 @@ from .activation import Activation
 
 
 def sigmoid(x):
-    return 1 / (1 + np.exp(-1*x))
+    return expit(x)
 
 class Sigmoid(Activation):
 
@@ -34,5 +35,6 @@ class Sigmoid(Activation):
     def backward(self: Sigmoid,
                  X: np.ndarray,
                  dLoss_dOutput: np.ndarray) -> np.ndarray:
-        return dLoss_dOutput * (sigmoid(X)*(1-sigmoid(X)))
+        probabilities = sigmoid(X)
+        return dLoss_dOutput * probabilities * (1 - probabilities)
 
