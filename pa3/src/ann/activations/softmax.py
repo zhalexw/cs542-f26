@@ -62,17 +62,7 @@ class Softmax(Activation):
                                 x: np.ndarray, 
                                 y_hat: np.ndarray) -> np.ndarray:
         
-        k = y_hat.shape[0]
-        J = np.empty((k, k))
-
-        for i in range(k):
-            for j in range(k):
-                if i == j:
-                    J[i, j] = self.stretch*y_hat[i]*(1-y_hat[i])
-                else:
-                    J[i, j] = -self.stretch*y_hat[i]*y_hat[j]
-
-        return J
+        return self.stretch * (np.diag(y_hat) - np.outer(y_hat, y_hat))
 
 
 

@@ -11,6 +11,7 @@ import sys
 
 # PYTHON PROJECT IMPORTS
 from .activations.activation import Activation
+from .activations.relu import ReLU
 from .activations.sigmoid import Sigmoid
 from .activations.softmax import Softmax
 from .data.header import Feature, FeatureType, ContinuousFeature, DiscreteFeature, Header
@@ -42,12 +43,15 @@ class ANNC(Model):
         self.num_inputs, self.input_to_feature_maps = self._allocate_inputs(self.header)
 
         # input to hidden layer parameters
-        self.W1 = Parameter(np.random.randn(self.num_inputs, self.num_hidden_units))
-        self.b1 = Parameter(np.random.randn(1, self.num_hidden_units))
+        hidden_gain = 2.0 if isinstance(self.hidden_activation, ReLU) else 1.0
+        hidden_scale = np.sqrt(hidden_gain / self.num_inputs)
+        self.W1 = Parameter(np.random.randn(self.num_inputs, self.num_hidden_units) * hidden_scale)
+        self.b1 = Parameter(np.zeros((1, self.num_hidden_units)))
 
         # hidden to output layer parameters
-        self.W2 = Parameter(np.random.randn(self.num_hidden_units, self.num_outputs))
-        self.b2 = Parameter(np.random.randn(1, self.num_outputs))
+        output_scale = np.sqrt(1.0 / self.num_hidden_units)
+        self.W2 = Parameter(np.random.randn(self.num_hidden_units, self.num_outputs) * output_scale)
+        self.b2 = Parameter(np.zeros((1, self.num_outputs)))
 
     def parameters(self: ANNC) -> Sequence[Parameter]:
         return [self.W1, self.b1, self.W2, self.b2]
@@ -216,7 +220,12 @@ class ANNC(Model):
 
         # need to map 'X_user_samples' into samples the network expects
         X_network_samples: np.ndarray = self._map_user_samples(X_user_samples)
-        Y_gt: np.ndarray = y_gt.reshape(-1,1) # make this a column vector
+
+        if self.num_outputs == 1: 
+            Y_gt: np.ndarray = y_gt.reshape(-1,1) # make this a column vector
+        else: # iris, digits: one hot encode
+            class_ids = y_gt.reshape(-1)
+            Y_gt = np.eye(self.num_outputs)[class_ids]
 
         # perform gradient descent until convergence
         
@@ -227,8 +236,12 @@ class ANNC(Model):
         for _ in range(max_iters):
             optimizer.reset()
             self._backward(X_network_samples, Y_gt, gamma)
-            optimizer.step()
 
+            for P in self.parameters():
+                np.clip(P.grad, a_min=-1.0, a_max=1.0, out=P.grad)
+
+            optimizer.step()
+            
             penalty = self.penalty(gamma)
 
             new_predictions = self._predict(X_network_samples)
